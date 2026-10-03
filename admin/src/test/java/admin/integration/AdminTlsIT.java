@@ -8,11 +8,10 @@ import io.strimzi.test.container.StrimziKafkaCluster;
 import io.strimzi.testclients.admin.KafkaAdminClient;
 import io.strimzi.testclients.configuration.ConfigurationConstants;
 import io.strimzi.testclients.constants.Constants;
+import io.strimzi.testclients.testutils.TlsUtils;
 import io.strimzi.testclients.utils.ConfigurationUtils;
-import org.apache.kafka.clients.CommonClientConfigs;
 import org.apache.kafka.clients.admin.Admin;
 import org.apache.kafka.clients.admin.TopicDescription;
-import org.apache.kafka.common.config.SslConfigs;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -30,11 +29,9 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Arrays;
 import java.util.List;
-import java.util.Map;
 import java.util.Properties;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.locks.LockSupport;
 
+import static io.strimzi.testclients.testutils.TestUtils.waitFor;
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.hasItem;
@@ -70,13 +67,9 @@ public class AdminTlsIT {
             .build();
         kafkaCluster.start();
 
-        String caCrt = TlsUtils.caCertificate(kafkaCluster);
-        String userCrt = TlsUtils.userCertificateChain(kafkaCluster);
-        String userKey = TlsUtils.userKey(kafkaCluster);
-
-        Path caCrtFile = Files.writeString(certDir.resolve("ca.crt"), caCrt);
-        Path userCrtFile = Files.writeString(certDir.resolve("user.crt"), userCrt);
-        Path userKeyFile = Files.writeString(certDir.resolve("user.key"), userKey);
+        Path caCrtFile = Files.writeString(certDir.resolve("ca.crt"), TlsUtils.caCertificate(kafkaCluster));
+        Path userCrtFile = Files.writeString(certDir.resolve("user.crt"), TlsUtils.userCertificateChain(kafkaCluster));
+        Path userKeyFile = Files.writeString(certDir.resolve("user.key"), TlsUtils.userKey(kafkaCluster));
 
         cmd = new CommandLine(new KafkaAdminClient());
         assertThat(cmd.execute("configure", "common", "--bootstrap-server", kafkaCluster.getBootstrapServers()), is(0));
@@ -86,15 +79,7 @@ public class AdminTlsIT {
             "--keystore-key", userKeyFile.toString()), is(0));
 
         // Independent TLS client used only to check what the admin client did
-        admin = Admin.create(Map.of(
-            CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG, kafkaCluster.getBootstrapServers(),
-            CommonClientConfigs.SECURITY_PROTOCOL_CONFIG, "SSL",
-            SslConfigs.SSL_TRUSTSTORE_TYPE_CONFIG, "PEM",
-            SslConfigs.SSL_TRUSTSTORE_CERTIFICATES_CONFIG, caCrt,
-            SslConfigs.SSL_KEYSTORE_TYPE_CONFIG, "PEM",
-            SslConfigs.SSL_KEYSTORE_CERTIFICATE_CHAIN_CONFIG, userCrt,
-            SslConfigs.SSL_KEYSTORE_KEY_CONFIG, userKey
-        ));
+        admin = Admin.create(TlsUtils.kafkaClientConfig(kafkaCluster));
     }
 
     @AfterAll
@@ -110,9 +95,8 @@ public class AdminTlsIT {
     void testTopicOperationsOverTls() throws Exception {
         String topicName = "my-tls-topic";
 
-        cmd.execute("topic", "create", "-tp", "2", "-trf", "1", "-t", topicName);
-        // Sleep for a while to prevent race condition during topics creation
-        LockSupport.parkNanos(TimeUnit.SECONDS.toNanos(2));
+        assertThat(cmd.execute("topic", "create", "-tp", "2", "-trf", "1", "-t", topicName), is(0));
+        waitFor("topic " + topicName + " to be created", () -> admin.listTopics().names().get().contains(topicName));
 
         TopicDescription topicDescription = admin.describeTopics(List.of(topicName)).allTopicNames().get().get(topicName);
         assertThat(topicDescription.partitions().size(), is(2));
@@ -120,11 +104,8 @@ public class AdminTlsIT {
         List<String> listedTopics = Arrays.asList(captureOutput("topic", "list").split("\\n"));
         assertThat(listedTopics, hasItem(topicName));
 
-        cmd.execute("topic", "delete", "-t", topicName);
-        // Sleep for a while to prevent race condition during topics deletion
-        LockSupport.parkNanos(TimeUnit.SECONDS.toNanos(2));
-
-        assertThat(admin.listTopics().names().get().contains(topicName), is(false));
+        assertThat(cmd.execute("topic", "delete", "-t", topicName), is(0));
+        waitFor("topic " + topicName + " to be deleted", () -> !admin.listTopics().names().get().contains(topicName));
     }
 
     private static String captureOutput(String... args) {

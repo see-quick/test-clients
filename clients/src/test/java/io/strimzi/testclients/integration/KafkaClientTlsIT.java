@@ -8,10 +8,9 @@ import io.strimzi.test.container.StrimziKafkaCluster;
 import io.strimzi.testclients.configuration.ConfigurationConstants;
 import io.strimzi.testclients.kafka.KafkaConsumerClient;
 import io.strimzi.testclients.kafka.KafkaProducerClient;
-import org.apache.kafka.clients.CommonClientConfigs;
+import io.strimzi.testclients.testutils.TlsUtils;
 import org.apache.kafka.clients.admin.Admin;
 import org.apache.kafka.clients.admin.NewTopic;
-import org.apache.kafka.common.config.SslConfigs;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -63,7 +62,7 @@ public class KafkaClientTlsIT {
         String topicName = "my-tls-topic";
 
         // Topic is created by a plain Kafka Admin with the same PEM material, so the clients under test are the only TLS path we rely on
-        try (Admin admin = Admin.create(tlsAdminConfig())) {
+        try (Admin admin = Admin.create(TlsUtils.kafkaClientConfig(kafkaCluster))) {
             admin.createTopics(List.of(new NewTopic(topicName, 1, (short) 1))).all().get();
         }
 
@@ -97,17 +96,5 @@ public class KafkaClientTlsIT {
         configuration.put(ConfigurationConstants.USER_CRT_ENV, userCrt);
         configuration.put(ConfigurationConstants.USER_KEY_ENV, userKey);
         return configuration;
-    }
-
-    private Map<String, Object> tlsAdminConfig() {
-        return Map.of(
-            CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG, kafkaCluster.getBootstrapServers(),
-            CommonClientConfigs.SECURITY_PROTOCOL_CONFIG, "SSL",
-            SslConfigs.SSL_TRUSTSTORE_TYPE_CONFIG, "PEM",
-            SslConfigs.SSL_TRUSTSTORE_CERTIFICATES_CONFIG, caCrt,
-            SslConfigs.SSL_KEYSTORE_TYPE_CONFIG, "PEM",
-            SslConfigs.SSL_KEYSTORE_CERTIFICATE_CHAIN_CONFIG, userCrt,
-            SslConfigs.SSL_KEYSTORE_KEY_CONFIG, userKey
-        );
     }
 }
